@@ -1,16 +1,9 @@
 import { FoxgloveServer } from '@foxglove/ws-protocol';
+import  { TopicSchema }  from '../../types'
 
 export const Channels = new Map<string, number>();
-const textEncoder = new TextEncoder();
 
-export interface topicSchema {
-    topic: string,
-    encoding: string,
-    schemaName: string,
-    schema: any,
-}
-
-export const processSchemas = async (server: FoxgloveServer, topicSchema: topicSchema) => {
+export const processSchemas = async (server: FoxgloveServer, topicSchema: TopicSchema) => {
 
     const channelId = server.addChannel({
       topic: topicSchema.topic,
@@ -20,10 +13,9 @@ export const processSchemas = async (server: FoxgloveServer, topicSchema: topicS
     });
 
     Channels.set(topicSchema.schemaName, channelId);
-
-  return channelId; 
 };
 
 export const getSchemaNameByChannelId = (chanId: number | string) => {
     return Array.from(Channels.entries()).find(([_, id]) => id === chanId)?.[0]
 }
+

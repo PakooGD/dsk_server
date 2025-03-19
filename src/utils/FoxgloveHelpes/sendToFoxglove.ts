@@ -1,11 +1,10 @@
 import { FoxgloveServer } from '@foxglove/ws-protocol';
-import { Channels } from './';
-import { TopicData } from './';
-import { timeStamp } from 'console';
+import { Channels } from './addChannelToFoxglove';
+import { TopicData } from '../../types';
 
 const textEncoder = new TextEncoder();
 
-const sendData = async (server: FoxgloveServer, message: TopicData | any) => {
+const sendToFoxglove = async (server: FoxgloveServer, message: TopicData | any) => {
     let data: TopicData;
   
     if (Buffer.isBuffer(message) || typeof message === 'string') {
@@ -23,4 +22,4 @@ const sendData = async (server: FoxgloveServer, message: TopicData | any) => {
     );
 };
 
-export default sendData;
+export default sendToFoxglove;

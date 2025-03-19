@@ -1,155 +1,91 @@
+// src/app.ts
+import express from 'express';
+import droneRoutes  from './routes/droneRoutes'
+import { drones } from './services/authorization'
 import { WebSocketServer } from 'ws';
-import express, { Request, Response } from "express";
-import { FoxgloveServer } from '@foxglove/ws-protocol';
-import { sendData, processUlogFile, processSchemas,getSchemaNameByChannelId } from "./utils";
-import WebSocket from 'ws';
+import { hmac } from './utils/helpers/hmac'
+import { eventEmitter } from './events/eventEmmiter'
+import { EventTypes } from './types' 
 
-const path = require('path');
-const fs = require('fs');
-const multer = require('multer');
+const jwt = require('jsonwebtoken');
 
-const FoxgloveStudioPort = 8081;
-const BridgePort = 8082;
-const httpPort = 3000;
+const handleErrors = require('./middleware/handleErrors');
 
-const readUlog = false;
-let topicSchema;
+const BridgePort: any = process.env.DRONE || 8082;
+const httpPort: any = process.env.PORT || 3000;
+const FoxglovePort: any = process.env.FOXGLOVE || 8081;
 
 const app = express();
 
-const storage = multer.diskStorage({
-    destination: (req:any, file:any, cb:any) => {
-        const uploadDir = path.join(__dirname, 'ulog');
-        if (!fs.existsSync(uploadDir)) {
-            fs.mkdirSync(uploadDir, { recursive: true }); 
+app.use(express.json());
+app.use('/api', droneRoutes);
+app.use(handleErrors);
+
+const wss = new WebSocketServer({ port: BridgePort }); 
+
+wss.on('connection', (ws, req) => {
+    const token = req.headers['authorization']?.split(' ')[1];
+
+    if (!token) {
+        ws.close(1008, 'Unauthorized');
+        return;
+    }
+
+    const decoded = jwt.verify(token, process.env.SECRET_KEY);
+    drones.set(decoded.drone_id,  ws);
+    ws.send(JSON.stringify({ type: 'request_schemas' }));
+    console.log(`Drone ${decoded.drone_id} connected`);
+
+    
+    ws.on('message', (message: string) => {        
+        const { data, signature } = JSON.parse(message);
+
+        // Проверка подписи
+        const expectedSignature = hmac(process.env.SECRET_KEY, data);
+        if (signature !== expectedSignature) {
+            console.log('Invalid signature');
+            return;
         }
-        cb(null, uploadDir); 
-    },
-    filename: (req:any, file:any, cb:any) => {
-        cb(null, file.originalname);
-    },
-});
 
-let uploadedFile:any = null;
+        if (data.type === 'schemas') {
+            console.log(`Received schemas from ${decoded.drone_id}:`, data.schemas);
+            eventEmitter.emit(EventTypes.SCHEMAS_RECEIVED, { drone_id: decoded.drone_id, schemas: data.schemas });
+        }
+        // eventEmitter.emit(EventTypes.SEND_DATA, message)
+    });
 
-const upload = multer({ storage });
-
-app.use(express.json()); 
-const server = new FoxgloveServer({ name: "px4-foxglove-bridge" });
-
-const ws = new WebSocketServer({
-    port: FoxgloveStudioPort,
-    handleProtocols: (protocols) => server.handleProtocols(protocols),
+    ws.on('close', () => {
+        drones.delete(decoded.drone_id);
+        console.log(`Drone ${decoded.drone_id} disconnected.`);
+    });
 });
 
 app.listen(httpPort, () => {
     console.log(`Server is running on http://localhost:${httpPort}`);
 });
 
-app.post('/mavlog', upload.single('file'), (req: any, res: any) => {
-    if (!req.file) {
-        return res.status(400).send("No file uploaded.");
-    }
-
-    const filePath = req.file.path;
-    const originalName = req.file.originalname;
-
-    if(readUlog){
-        processUlogFile(server,filePath);
-    }
-    // Перемещение файла в постоянную директорию
-    const targetPath = path.join(__dirname, 'log/mav', originalName);
-    fs.rename(filePath, targetPath, (err:any) => {
-        if (err) {
-            return res.status(500).send("Failed to save the file.");
-        }
-        res.status(200).send({ message: "File uploaded successfully.", filePath: targetPath });
-    });
-});
-
-app.post('/schema', (req: any, res: any) => {
-    topicSchema = req.body;
-    if (!topicSchema) {
-        return res.status(400).send("Missing required fields: topic, schemaName, schema");
-    }
-    const channelId = processSchemas(server, topicSchema)
-    res.status(200).send({ channelId });
-});
-
-app.post('/ulog', upload.single('file'), (req: any, res: any) => {
-    if (!req.file) {
-        return res.status(400).send("No file uploaded.");
-    }
-    uploadedFile = req.file;
-    if(readUlog){
-        processUlogFile(server,uploadedFile.path);
-    }
-
-    res.status(200).send({
-        message: "File uploaded successfully.",
-        fileInfo: {
-            originalName: uploadedFile.originalname,
-            path: uploadedFile.path,
-            size: uploadedFile.size,
-        },
-    });
-});
 
 
+// const server = new FoxgloveServer({ name: "px4-foxglove-bridge" });
 
-function sendToPythonBridge(data: { type: string; topic: string }) {
-    if (pythonBridgeWebSocket) {
-        pythonBridgeWebSocket.send(JSON.stringify(data));
-    } else {
-        console.error("Python Bridge WebSocket is not connected.");
-    }
-}
-
-let pythonBridgeWebSocket: WebSocket | null = null;
+// const ws = new WebSocketServer({
+//     port: 8081,
+//     handleProtocols: (protocols) => server.handleProtocols(protocols),
+// });
 
 
-ws.on("connection", (conn, req) => {
-    console.log(`🎮 Foxglove Studio connected on ws://localhost:${FoxgloveStudioPort}`);
-    const name = `${req.socket.remoteAddress}:${req.socket.remotePort}`;
-   
-    if(!readUlog) {
-        const wss = new WebSocketServer({ port: BridgePort }); 
-        wss.on('connection', (ws) => {
-            pythonBridgeWebSocket = ws;
-            ws.on('message', (message: string) => {
-                sendData(server, message);
-            });
-            ws.on('close', () => {
-                console.log("Python Bridge WebSocket disconnected");
-                pythonBridgeWebSocket = null; 
-            });
-            ws.on('error', (error) => {
-                console.error("WebSocket error:", error);
-                pythonBridgeWebSocket = null;  
-            });
-        });
-    }
+// ws.on("connection", (conn, req) => {
+//     server.on("subscribe", (chanId) => {
 
-    server.on("subscribe", (chanId) => {
-        const shemaName = getSchemaNameByChannelId(chanId);
-        if (shemaName) {
-            sendToPythonBridge({ type: 'subscribe', topic:shemaName });
-        }
-    });
+//     });
 
-    server.on("unsubscribe", (chanId) => {
-        const shemaName = getSchemaNameByChannelId(chanId);
-        if (shemaName) {
-            sendToPythonBridge({ type: 'unsubscribe', topic:shemaName });
-        }
-    });
+//     server.on("unsubscribe", (chanId) => {
 
-    server.on("error", (err) => {
-        console.error("server error: %o", err);
-    });
+//     });
 
-    server.handleConnection(conn, name);
-});
+//     server.on("error", (err) => {
+//         console.error("server error: %o", err);
+//     });
 
-
-
+//     server.handleConnection(conn, name);
+// });

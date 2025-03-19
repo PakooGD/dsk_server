@@ -1,14 +1,9 @@
 import { MessageType, ULog } from "@foxglove/ulog";
 import { FileReader } from "@foxglove/ulog/node";
-import { formatString,sendToFoxglove,delay  } from "./";
+import { formatString,  } from "../helpers/formatString";
+import { delay  } from "../helpers/delay";
 import { FoxgloveServer } from '@foxglove/ws-protocol';
-
-export interface TopicData {
-    name: string;
-    topic: string;
-    timestamp: bigint;
-    data: Record<string, any>;
-}
+import  { TopicData }  from '../../types'
 
 export async function processUlogFile(server: FoxgloveServer, filePath: string) {
     try {
