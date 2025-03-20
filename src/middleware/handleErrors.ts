@@ -1,7 +1,8 @@
+// src/utils/errors/handleErrors.ts
 import { ErrorHandler, BadRequest, NotFound } from '../utils/errors/errors';
 import { Request, Response, NextFunction } from 'express';
 
-export const handleErrors = (err: Error, req: Request, res: Response, next: NextFunction) => {
+export const handleErrors = (err: Error, req: any, res: any, next: NextFunction) => {
     if (err instanceof ErrorHandler) {
         return res.status(err.getCode()).json({
             status: 'error',

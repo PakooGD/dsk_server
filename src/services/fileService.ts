@@ -20,7 +20,7 @@ export const upload = multer({ storage });
 export const saveFile = (file: any): Promise<void> => {
     return new Promise((resolve, reject) => {
         const targetPath = path.join(__dirname, '../../temp/ulog', file.originalname);
-        fs.rename(file.path, targetPath, (err) => {
+        fs.rename(file.path, targetPath, (err:any) => {
             if (err) {
                 reject(err);
             } else {

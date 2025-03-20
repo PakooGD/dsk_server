@@ -1,20 +1,28 @@
+// src/utils/errors/errors.ts
 export class ErrorHandler extends Error {
-    constructor(message: string) {
+    constructor(public message: string, public code: number) {
         super(message);
         this.name = this.constructor.name;
     }
 
-    getCode(): number {
-        if (this instanceof BadRequest) {
-            return 400;
-        }
-        if (this instanceof NotFound) {
-            return 404;
-        }
-        return 500;
+    getCode() {
+        return this.code;
     }
 }
 
-export class BadRequest extends ErrorHandler {}
-export class NotFound extends ErrorHandler {}
-export class OperationFailed extends ErrorHandler {}
+export class BadRequest extends ErrorHandler {
+    constructor(message: string) {
+        super(message, 400);
+    }
+}
+
+export class NotFound extends ErrorHandler {
+    constructor(message: string) {
+        super(message, 404);
+    }
+}
+export class OperationFailed extends ErrorHandler {
+    constructor(message: string) {
+        super(message, 401);
+    }
+}

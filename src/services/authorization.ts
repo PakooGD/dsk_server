@@ -1,27 +1,23 @@
-const path = require('path');
-const fs = require('fs');
-const multer = require('multer');
-const jwt = require('jsonwebtoken');
-
-const SECRET_KEY = process.env.SECRET_KEY;
-
 import { OperationFailed } from '../utils/errors/errors';
 
 export const drones = new Map<string, any>();
 
+const jwt = require('jsonwebtoken');
+require('dotenv').config()
+
 export const authorization = (drone_id: string): any => {
     try {
-        if (!drones.has(drone_id)) {
-            const accessToken = jwt.sign({ drone_id }, process.env.SECRET_KEY, { expiresIn: '15m' });
-            const refreshToken = jwt.sign({ drone_id }, process.env.REFRESH_SECRET_KEY, { expiresIn: '2d' });
-            drones.set(drone_id, null);
-            return { accessToken, refreshToken };
-        } 
+        if (drones.has(drone_id)) {        
+            throw new OperationFailed('current Id exists');  
+        }
+        const accessToken = jwt.sign({ drone_id }, process.env.SECRET_KEY, { expiresIn: '1m' });
+        const refreshToken = jwt.sign({ drone_id }, process.env.REFRESH_SECRET_KEY, { expiresIn: '1d' });
+        drones.set(drone_id, {});
+        return { accessToken, refreshToken };
     } catch (err) {
         throw new OperationFailed('Failed to save file');  
     }
 };
-
 
 export const refreshToken = (refreshToken: any): any => {
     try {

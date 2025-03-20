@@ -6,12 +6,12 @@ import { authorization } from '../services'
 
 export const authorize = (req: any, res: any, next: NextFunction) => {
     const { drone_id } = req.body;
-    if (!drone_id.file) {
+    if (!drone_id) {
         res.status(401)
         throw new BadRequest('Missing field');  
     }
     try {     
-        const [ accessToken, refreshToken ] = authorization(drone_id);
+        const { accessToken, refreshToken } = authorization(drone_id);
         res.status(200).json({ accessToken, refreshToken });
     } catch (err) {
         next(err)
