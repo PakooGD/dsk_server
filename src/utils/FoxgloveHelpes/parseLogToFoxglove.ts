@@ -20,8 +20,8 @@ export async function processUlogFile(server: FoxgloveServer, filePath: string) 
                     timestamp: BigInt(msg.value.timestamp),
                     data: msg.value,
                 };
-                await sendToFoxglove(server, message);
-                await delay(0.005); // Задержка 5 мс обязательна для отображения данных
+                // await sendToFoxglove(server, message);
+                // await delay(0.005); // Задержка 5 мс обязательна для отображения данных
             }
         }
         console.log("Messages processed and stored in Map.");

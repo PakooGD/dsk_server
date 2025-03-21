@@ -7,6 +7,7 @@ export class FileHandler {
     public static async saveFile(file: any): Promise<void> {
         try {
             await saveFile(file);
+            eventEmitter.emit(EventTypes.SEND_FILE, file)
         } catch (err) {
             throw new OperationFailed('Failed to save file');  
         }

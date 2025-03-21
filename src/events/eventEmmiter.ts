@@ -15,3 +15,4 @@ eventEmitter.on(EventTypes.SCHEMAS_RECEIVED, DroneHandler.saveSchemas);
 eventEmitter.on(EventTypes.HANDLE_TOPICS, DroneHandler.handleTopics);
 eventEmitter.on(EventTypes.SEND_DATA, DroneHandler.sendData);
 eventEmitter.on(EventTypes.REDIRECT, DroneHandler.setVisualizerByPath);
+eventEmitter.on(EventTypes.SEND_FILE, DroneHandler.sendFile);

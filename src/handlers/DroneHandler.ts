@@ -4,6 +4,9 @@ import { OperationFailed } from '../utils/errors/errors';
 import { drones } from '../services/authorization';
 import WebSocket from 'ws'; 
 import { FoxgloveServer } from '@foxglove/ws-protocol';
+import { MessageType, ULog } from "@foxglove/ulog";
+import { FileReader } from "@foxglove/ulog/node";
+import { formatString } from '../utils/helpers/formatString';
 
 const { WebSocketServer } = require("ws");
 
@@ -26,6 +29,24 @@ export class DroneHandler {
         }
         try {
             Schemas.set(drone_id, schemas);
+        } catch (err) {
+            throw new OperationFailed('Failed to save file');
+        }
+    }
+
+    public static async sendFile( file: any, droneId?: string ): Promise<void> {
+        if (!file) {
+            console.error('file is undefined');
+        }
+        try {
+            const ulog = new ULog(file);
+            await ulog.open(); 
+            const messages = await ulog.readMessages()
+            const message = {
+                source: `ulog ${file}`,
+                content: messages,
+            }
+            // логика отправки файла
         } catch (err) {
             throw new OperationFailed('Failed to save file');
         }
@@ -94,7 +115,7 @@ export class DroneHandler {
             }
 
             // Создаем новый визуализатор
-            let visualizer: DataVisualizer;
+            let visualizer: DataVisualizer = new ReactVisualizer();;
             switch (data.selectedPath) {
                 case 'site':
                     visualizer = new ReactVisualizer();
@@ -102,8 +123,8 @@ export class DroneHandler {
                 case 'foxglove':
                     visualizer = new FoxgloveVisualizer();
                     break;
-                case 'rerun':
-                    visualizer = new RerunVisualizer();
+                // case 'rerun':
+                //     visualizer = new RerunVisualizer();
                     break;
                 default:
                     throw new Error(`Unknown visualizer path: ${data.selectedPath}`);
@@ -154,11 +175,14 @@ class ReactVisualizer implements DataVisualizer {
     async visualizeData(droneId: string, data: any): Promise<void> {
         this.initializeWebSocketServer();
     
-        console.log(`Sending message to ${this.clients.size} clients:`);
-    
+        const toSend = JSON.stringify({
+            source: droneId,
+            content: data
+        })
+
         for (const client of this.clients) {
             if (client.readyState === WebSocket.OPEN) {
-                client.send(data);
+                client.send(toSend);
             }
         }
     }
@@ -202,28 +226,34 @@ class FoxgloveVisualizer implements DataVisualizer {
         });
     }
 
-    async visualizeData(droneId: string, data: TopicData): Promise<void> {
+    async visualizeData(droneId: string, data: any): Promise<void> {
         this.initializeWebSocketServer();
 
-        //костыль
-        this.Channels.forEach((id:any, name:any) => {
-            this.server?.removeChannel(id)
-        })
+        data = JSON.parse(data);
 
-        data = JSON.parse(data.toString());
-
-        const schemas = Schemas.get(droneId)?.filter(schema => SchemasSubsribed.get(droneId)?.includes(schema.schemaName))
-
-        schemas?.forEach(schema=> {
-            const channelId = this.server?.addChannel({
-                topic: schema.topic,
-                encoding: schema.encoding,
-                schemaName: schema.schemaName,
-                schema: schema.schema,
-            });
-            this.Channels.set(schema.schemaName, channelId);
-        })
+        const schemasToAddChannel = Schemas.get(droneId)?.filter(schema => SchemasSubsribed.get(droneId)?.includes(schema.schemaName))
         
+        const exeptions = SchemasSubsribed.get(droneId)?.filter(schemaName=>this.Channels.has(schemaName))
+
+        this.Channels.forEach((id:any, name:any) => {
+            if (!exeptions?.includes(name)) {
+                this.server?.removeChannel(id)
+                this.Channels.delete(name)
+            }
+        })
+
+        schemasToAddChannel?.forEach(schema => {   
+            if(!this.Channels.has(schema.schemaName)){
+                const channelId = this.server?.addChannel({
+                    topic: schema.topic,
+                    encoding: schema.encoding,
+                    schemaName: schema.schemaName,
+                    schema: JSON.stringify(schema.schema,(_, v) => typeof v === 'bigint' ? v.toString() : v),
+                });
+                this.Channels.set(schema.schemaName, channelId); 
+            }
+        })
+
         await this.server?.sendMessage(
             this.Channels.get(data.topic)!,
             BigInt(data.timestamp),
@@ -233,6 +263,10 @@ class FoxgloveVisualizer implements DataVisualizer {
 
     close() {
         if (this.ws && this.server) {
+            this.Channels.forEach((id:any, name:any) => {
+                this.server?.removeChannel(id)     
+            }) // каналы остаются ?/!
+            this.Channels.clear()
             this.ws.close();
             this.ws = null;
             this.server = null;
