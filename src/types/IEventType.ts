@@ -7,5 +7,6 @@ export enum EventTypes {
     HANDLE_TOPICS = 'HANDLE_TOPICS',
     GET_DRONES = 'GET_DRONES',
     REDIRECT = 'REDIRECT',
-    SEND_FILE = 'SEND_FILE'
+    SEND_FILE = 'SEND_FILE',
+    LOGOUT = 'LOGOUT',
 }

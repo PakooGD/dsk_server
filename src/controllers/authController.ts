@@ -2,7 +2,7 @@ import { NextFunction } from 'express';
 import { eventEmitter } from '../events/eventEmmiter'
 import { EventTypes } from '../types' 
 import { ErrorHandler, BadRequest, OperationFailed } from '../utils/errors/errors';
-import { authorization } from '../services'
+import { authorization,refresh } from '../services'
 
 export const authorize = (req: any, res: any, next: NextFunction) => {
     const { drone_id } = req.body;
@@ -25,8 +25,8 @@ export const refreshToken = (req: any, res: any, next: NextFunction) => {
         throw new BadRequest('Refresh token is required');  
     }
     try {     
-        const accessToken = refreshToken(refreshToken);
-        res.status(200).json(accessToken);
+        const accessToken = refresh(refreshToken);
+        res.status(200).json({accessToken});
     } catch (err) {
         next(err)
     }

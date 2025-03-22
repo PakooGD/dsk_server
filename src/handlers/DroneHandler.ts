@@ -1,25 +1,22 @@
-import { eventEmitter } from '../events/eventEmmiter';
 import { EventTypes, TopicSchema, TopicStatus, Drone, TopicData } from '../types';
 import { OperationFailed } from '../utils/errors/errors';
 import { drones } from '../services/authorization';
 import WebSocket from 'ws'; 
-import { FoxgloveServer } from '@foxglove/ws-protocol';
 import { MessageType, ULog } from "@foxglove/ulog";
-import { FileReader } from "@foxglove/ulog/node";
-import { formatString } from '../utils/helpers/formatString';
 
-const { WebSocketServer } = require("ws");
+import { clients,server } from '../app';
 
 export const Schemas = new Map<string, TopicSchema[]>();
 const textEncoder = new TextEncoder();
 export const SchemasSubsribed = new Map<string, string[]>();
 
+
 interface DataVisualizer {
     visualizeData(droneId: string, data: any): Promise<void>;
-    close?(): void; 
 }
 
 const visualizers = new Map<string, DataVisualizer>();
+const Channels = new Map<string, Map<string, number>>();
 
 export class DroneHandler {
 
@@ -95,11 +92,21 @@ export class DroneHandler {
                     connection.send(JSON.stringify({ type: 'subscribe', topic: topic.schemaName }));
                     toSubsrcibeSchemas.push(topic.schemaName)
                 } else {
+                    // const id = Channels.get(data.drone_id)!.get(topic.schemaName)!
+                    // server?.removeChannel(id);
+                    // Channels.get(data.drone_id)!.delete(topic.schemaName);
                     connection.send(JSON.stringify({ type: 'unsubscribe', topic: topic.schemaName }));
                 }
             });
 
             SchemasSubsribed.set(data.drone_id, toSubsrcibeSchemas)
+
+            if(SchemasSubsribed.get(data.drone_id)?.length == 0){    
+                Channels.get(data.drone_id)!.forEach(id => {
+                    server?.removeChannel(id);
+                })
+               
+            } 
 
         } catch (err) {
             throw new OperationFailed('Failed');
@@ -108,14 +115,8 @@ export class DroneHandler {
 
     public static setVisualizerByPath(data: any): void {
         try {
-            // Закрываем текущий визуализатор, если он существует
-            const currentVisualizer = visualizers.get(data.droneId);
-            if (currentVisualizer && typeof currentVisualizer.close === 'function') {
-                currentVisualizer.close();
-            }
-
-            // Создаем новый визуализатор
             let visualizer: DataVisualizer = new ReactVisualizer();;
+
             switch (data.selectedPath) {
                 case 'site':
                     visualizer = new ReactVisualizer();
@@ -123,14 +124,10 @@ export class DroneHandler {
                 case 'foxglove':
                     visualizer = new FoxgloveVisualizer();
                     break;
-                // case 'rerun':
-                //     visualizer = new RerunVisualizer();
-                    break;
                 default:
                     throw new Error(`Unknown visualizer path: ${data.selectedPath}`);
             }
 
-            // Сохраняем визуализатор
             visualizers.set(data.droneId, visualizer);
             console.log(`Visualizer for drone ${data.droneId} set to ${data.selectedPath}`);
         } catch (err) {
@@ -144,7 +141,7 @@ export class DroneHandler {
             if (visualizer) {
                 await visualizer.visualizeData(droneId, data);
             } else {
-                console.error(`No visualizer configured for drone ${droneId}`);
+                visualizers.set(data.droneId, new ReactVisualizer());
             }
         } catch (err) {
             throw new OperationFailed('Failed to send data');
@@ -153,131 +150,102 @@ export class DroneHandler {
 }
 
 class ReactVisualizer implements DataVisualizer {
-    private server: WebSocket.Server | null = null;
-    private clients: Set<WebSocket> = new Set();
-
-    constructor() {}
-
-    private initializeWebSocketServer() {
-        if (this.server) return; 
-        this.server = new WebSocket.Server({ port: 8083 });
-
-        this.server.on('connection', (socket) => {
-            this.clients.add(socket);
-
-            socket.on('close', () => {
-                this.clients.delete(socket);
-            });
-        });
-        
-    }
-
     async visualizeData(droneId: string, data: any): Promise<void> {
-        this.initializeWebSocketServer();
-    
-        const toSend = JSON.stringify({
+        const message = JSON.stringify({
             source: droneId,
             content: data
-        })
-
-        for (const client of this.clients) {
-            if (client.readyState === WebSocket.OPEN) {
-                client.send(toSend);
+        });
+      
+        Array.from(clients.values()).forEach((client) => {
+            if (client?.readyState === WebSocket.OPEN) {
+                client.send(message);
             }
-        }
-    }
-
-    close() {
-        console.log('close')
-        if (this.server) {
-            this.server.close();
-            this.server = null;
-            this.clients.clear();
-            console.log('WebSocket server closed');
-        }
+        });
     }
 }
 
-class FoxgloveVisualizer implements DataVisualizer {   
-    private server: FoxgloveServer | null = null;
-    private ws: any | null = null;
-    private Channels = new Map<string, number | undefined>();
-    private clients: Set<FoxgloveServer> = new Set();
-
-    constructor() {}
-
-    private initializeWebSocketServer() {
-        if (this.server) return; 
-
-        this.server = new FoxgloveServer({ name: "px4-foxglove-bridge" });
-        this.ws = new WebSocketServer({
-            port: 8081,
-            handleProtocols: (protocols:any) => this.server?.handleProtocols(protocols),
-        });
-
-        this.ws.on("connection", (conn:any, req:any) => {
-            const name = `${req.socket.remoteAddress}:${req.socket.remotePort}`;
-            this.clients.add(conn);
-
-            conn.on('close', () => {
-                this.clients.delete(conn);
-            });
-            this.server?.handleConnection(conn, name);
-        });
-    }
-
+class FoxgloveVisualizer implements DataVisualizer {
     async visualizeData(droneId: string, data: any): Promise<void> {
-        this.initializeWebSocketServer();
-
         data = JSON.parse(data);
 
-        const schemasToAddChannel = Schemas.get(droneId)?.filter(schema => SchemasSubsribed.get(droneId)?.includes(schema.schemaName))
-        
-        const exeptions = SchemasSubsribed.get(droneId)?.filter(schemaName=>this.Channels.has(schemaName))
 
-        this.Channels.forEach((id:any, name:any) => {
-            if (!exeptions?.includes(name)) {
-                this.server?.removeChannel(id)
-                this.Channels.delete(name)
-            }
-        })
-
-        schemasToAddChannel?.forEach(schema => {   
-            if(!this.Channels.has(schema.schemaName)){
-                const channelId = this.server?.addChannel({
-                    topic: schema.topic,
-                    encoding: schema.encoding,
-                    schemaName: schema.schemaName,
-                    schema: JSON.stringify(schema.schema,(_, v) => typeof v === 'bigint' ? v.toString() : v),
-                });
-                this.Channels.set(schema.schemaName, channelId); 
-            }
-        })
-
-        await this.server?.sendMessage(
-            this.Channels.get(data.topic)!,
-            BigInt(data.timestamp),
-            textEncoder.encode(JSON.stringify(data.data, (_, v) => typeof v === 'bigint' ? v.toString() : v)),
+        // Получаем схемы топиков для данного дрона
+        const schemasToAddChannel = Schemas.get(droneId)?.filter(schema =>
+            SchemasSubsribed.get(droneId)?.includes(schema.schemaName)
         );
-    }
 
-    close() {
-        if (this.ws && this.server) {
-            this.Channels.forEach((id:any, name:any) => {
-                this.server?.removeChannel(id)     
-            }) // каналы остаются ?/!
-            this.Channels.clear()
-            this.ws.close();
-            this.ws = null;
-            this.server = null;
-            this.clients.clear();
+        // Инициализируем вложенный словарь для дрона, если его нет
+        if (!Channels.has(droneId)) {
+            Channels.set(droneId, new Map<string, number>());
+        }
+        const droneChannels = Channels.get(droneId)!;
+
+
+        // Удаляем каналы, которые больше не используются для данного дрона
+        const channelsToRemove: string[] = [];
+        droneChannels.forEach((channelId, schemaName) => {
+            // Проверяем, что канал больше не нужен
+            const isChannelNeeded = schemasToAddChannel?.some(
+                schema => schema.schemaName === schemaName
+            );
+
+            // Если schemasToAddChannel пуст или канал больше не нужен, помечаем его для удаления
+            if (schemasToAddChannel === undefined || !isChannelNeeded) {
+                channelsToRemove.push(schemaName);
+            }
+        });
+
+        // Удаляем помеченные каналы
+        channelsToRemove.forEach(schemaName => {
+            const channelId = droneChannels.get(schemaName);
+            if (channelId !== undefined) {
+                try {
+                    server?.removeChannel(channelId);
+                    droneChannels.delete(schemaName);
+                } catch (err) {
+                    console.error(`Failed to remove channel ${schemaName}:`, err);
+                }
+            }
+        });
+
+        // Создаем новые каналы для активных топиков данного дрона
+        schemasToAddChannel?.forEach(schema => {
+            const schemaName = schema.schemaName;
+            if (!droneChannels.has(schemaName)) {
+                try {
+                    const channelId = server?.addChannel({
+                        topic: `${schema.topic} [${droneId}]`,
+                        encoding: schema.encoding,
+                        schemaName: schemaName,
+                        schema: JSON.stringify(schema.schema, (_, v) => typeof v === 'bigint' ? v.toString() : v),
+                    });
+                    if (channelId !== undefined) {
+                        droneChannels.set(schemaName, channelId);
+                    } else {
+                        console.error(`Failed to create channel ${schemaName}`);
+                    }
+                } catch (err) {
+                    console.error(`Error creating channel ${schemaName}:`, err);
+                }
+            }
+        });
+
+        // Отправляем данные через соответствующий канал
+        const schemaName = data.topic;
+        const channelId = droneChannels.get(schemaName);
+        if (channelId !== undefined) {
+            try {
+                await server?.sendMessage(
+                    channelId,
+                    BigInt(data.timestamp),
+                    textEncoder.encode(JSON.stringify(data.data, (_, v) => typeof v === 'bigint' ? v.toString() : v)),
+                );
+            } catch (err) {
+                console.error(`Failed to send data through channel ${schemaName}:`, err);
+            }
+        } else {
+            console.error(`Channel ${schemaName} not found for drone ${droneId}`);
         }
     }
 }
 
-class RerunVisualizer implements DataVisualizer {
-    async visualizeData(data: any): Promise<void> {
-        // Отправка данных в Rerun (например, через WebSocket или API)
-        console.log("Visualizing data in Rerun:", data);
-    }
-}
