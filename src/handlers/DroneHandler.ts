@@ -1,15 +1,14 @@
-import { EventTypes, TopicSchema, TopicStatus, Drone, TopicData } from '../types';
+import { TopicSchema, TopicStatus, Drone } from '../types';
 import { OperationFailed } from '../utils/errors/errors';
 import { drones } from '../services/authorization';
 import WebSocket from 'ws'; 
-import { MessageType, ULog } from "@foxglove/ulog";
-
 import { clients,server } from '../app';
+import fs from 'fs';
+import path from 'path';
 
 export const Schemas = new Map<string, TopicSchema[]>();
 const textEncoder = new TextEncoder();
 export const SchemasSubsribed = new Map<string, string[]>();
-
 
 interface DataVisualizer {
     visualizeData(droneId: string, data: any): Promise<void>;
@@ -31,21 +30,41 @@ export class DroneHandler {
         }
     }
 
-    public static async sendFile( file: any, droneId?: string ): Promise<void> {
-        if (!file) {
-            console.error('file is undefined');
-        }
+    public static async loadLogs(data:any, res: any): Promise<any> {
         try {
-            const ulog = new ULog(file);
-            await ulog.open(); 
-            const messages = await ulog.readMessages()
-            const message = {
-                source: `ulog ${file}`,
-                content: messages,
+            // Находим все файлы, начинающиеся на drone_id и заканчивающиеся на .ulog
+            const { droneId } = data
+
+            const logDir = '/home/alexei/Projects/dsk_server/temp/ulog';
+
+            if (!fs.existsSync(logDir)) {
+                throw new OperationFailed(`Log directory not found: ${logDir}`);
             }
-            // логика отправки файла
+
+            const files = fs.readdirSync(logDir)
+                .filter(file => file.startsWith(droneId) && file.endsWith('.ulg'))
+                .map(file => ({
+                    name: file,
+                    path: path.join(logDir, file),
+                    time: fs.statSync(path.join(logDir, file)).mtime.getTime() // Время последнего изменения
+                }));
+
+            if (files.length === 0) {
+                throw new OperationFailed(`No log files found for drone ${droneId}`);
+            }
+
+            // Выбираем файл с самой последней датой
+            const latestFile = files.reduce((prev, current) => 
+                (prev.time > current.time) ? prev : current
+            );
+            const fileData = fs.readFileSync(latestFile.path);
+            
+        // Устанавливаем заголовки для скачивания файла
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename="${latestFile.name}"`);
+        res.send(fileData);
         } catch (err) {
-            throw new OperationFailed('Failed to save file');
+            throw new OperationFailed('Failed to load file');
         }
     }
 
@@ -101,11 +120,12 @@ export class DroneHandler {
 
             SchemasSubsribed.set(data.drone_id, toSubsrcibeSchemas)
 
-            if(SchemasSubsribed.get(data.drone_id)?.length == 0){    
-                Channels.get(data.drone_id)!.forEach(id => {
-                    server?.removeChannel(id);
-                })
-               
+            if(SchemasSubsribed.get(data.drone_id)?.length == 0){ 
+                if(Channels && Channels.size !== 0){
+                    Channels.get(data.drone_id)!.forEach(id => {
+                        server?.removeChannel(id);
+                    })
+                } 
             } 
 
         } catch (err) {

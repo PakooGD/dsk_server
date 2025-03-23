@@ -9,4 +9,5 @@ export enum EventTypes {
     REDIRECT = 'REDIRECT',
     SEND_FILE = 'SEND_FILE',
     LOGOUT = 'LOGOUT',
+    LOAD_LOGS = 'LOAD_LOGS',
 }

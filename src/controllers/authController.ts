@@ -1,7 +1,5 @@
 import { NextFunction } from 'express';
-import { eventEmitter } from '../events/eventEmmiter'
-import { EventTypes } from '../types' 
-import { ErrorHandler, BadRequest, OperationFailed } from '../utils/errors/errors';
+import { BadRequest } from '../utils/errors/errors';
 import { authorization,refresh } from '../services'
 
 export const authorize = (req: any, res: any, next: NextFunction) => {

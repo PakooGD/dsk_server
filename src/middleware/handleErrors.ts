@@ -1,6 +1,6 @@
 // src/utils/errors/handleErrors.ts
-import { ErrorHandler, BadRequest, NotFound } from '../utils/errors/errors';
-import { Request, Response, NextFunction } from 'express';
+import { ErrorHandler } from '../utils/errors/errors';
+import { NextFunction } from 'express';
 
 export const handleErrors = (err: Error, req: any, res: any, next: NextFunction) => {
     if (err instanceof ErrorHandler) {
