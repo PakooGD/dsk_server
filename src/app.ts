@@ -1,60 +1,51 @@
 import express from 'express';
-import droneRoutes from './routes/droneRoutes';
-import { drones } from './services/authorization';
-import { signMessage } from './utils/helpers/signMessage';
-import { eventEmitter } from './events/eventEmmiter';
-import { EventTypes } from './types';
+import droneRoutes, {eventEmitter} from './routes/DroneRoutes';
+import { verifyAuthTokens, decryptData } from './utils/helpers/CryptoHelper';
+import { EventTypes } from './types/ITypes';
 import { handleErrors } from './middleware/handleErrors';
-import cors from 'cors';
-import { createDecipheriv } from 'crypto';
-import WebSocket from 'ws';
+import WebSocket, { WebSocketServer } from 'ws';
 import { FoxgloveServer } from '@foxglove/ws-protocol';
-import { WebSocketServer } from 'ws';
+import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 
-function decryptData(encryptedData: string, secretKey: string): string {
-    const data = JSON.parse(encryptedData);
-    const iv = Buffer.from(data.iv, 'base64');
-    const ciphertext = Buffer.from(data.ciphertext, 'base64');
-    const decipher = createDecipheriv('aes-256-cbc', Buffer.from(secretKey), iv);
-    let decrypted = decipher.update(ciphertext);
-    decrypted = Buffer.concat([decrypted, decipher.final()]);
-    return decrypted.toString('utf-8');
-}
-
-const app = express();
-
-app.use(
-    cors({
-        origin: 'http://localhost:3000',
-        credentials: true,
-        allowedHeaders: ['Content-Type', 'Authorization'],
-    })
-);
-
-const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
-const BridgePort: any = process.env.DRONE || 8082;
+const dronePort: any = process.env.DRONE || 8082;
+const foxglovePort: any = process.env.FOXGLOVE_PORT || 8081;
 const httpPort: any = process.env.SERVER_PORT || 5000;
+const reactPort: any = process.env.REACT_PORT || 8083;
+const mavPort: any = process.env.MAV_PORT || 8086;
 
+const foxgloveServer = new WebSocketServer({ port: foxglovePort, handleProtocols: (protocols: any) => server?.handleProtocols(protocols)!});
+const reactServer = new WebSocketServer({ port: reactPort });
+const droneServer = new WebSocketServer({ port: dronePort });
+const mavServer = new WebSocketServer({ port: mavPort });
+
+export const server = new FoxgloveServer({ name: "px4-foxglove-bridge" });
+export const reactClients = new Map<string, WebSocket | null>();
+export const droneClients = new Map<string, WebSocket | null>();
+
+eventEmitter.emit(EventTypes.SET_OFFLINE_STATUS);
+
+const app = express();
+app.use(cors({
+    origin: 'http://localhost:3000',
+    credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 app.use(express.json());
 app.use('/api', droneRoutes);
 app.use(handleErrors);
 
-const reactServer = new WebSocketServer({ port: 8083 });
 
-export const clients = new Map<string, WebSocket | null>();
-
-reactServer.on('connection', (reactSocket) => {
+reactServer.on('connection', (ws) => {
     console.log('New client connected');
-
-    reactSocket.on('message', (message: string) => {
+    ws.on('message', (message: string) => {
         try {
             const data = JSON.parse(message);
             if (data.type === 'register' && data.id) {
-                clients.set(data.id, reactSocket);
+                reactClients.set(data.id, ws);
                 console.log(`Client registered for drone ${data.id}`);
             }
         } catch (err) {
@@ -62,21 +53,15 @@ reactServer.on('connection', (reactSocket) => {
         }
     });
 
-    reactSocket.on('close', () => {
+    ws.on('close', () => {
         console.log('Client disconnected');
-        for (const id in clients) {
-            clients.delete(id);
+        for (const id in reactClients) {
+            reactClients.delete(id);
             console.log(`Client unregistered for drone ${id}`);
         }
     });
 });
 
-export const server = new FoxgloveServer({ name: "px4-foxglove-bridge" });
-
-const foxgloveServer = new WebSocketServer({
-    port: 8081,
-    handleProtocols: (protocols: any) => server?.handleProtocols(protocols)!,
-});
 
 foxgloveServer.on("connection", (conn: any, req: any) => {
     const name = `${req.socket.remoteAddress}:${req.socket.remotePort}`;
@@ -90,88 +75,21 @@ foxgloveServer.on("connection", (conn: any, req: any) => {
     server?.handleConnection(conn, name);
 });
 
-const wss = new WebSocketServer({ port: BridgePort });
 
-// Хранилище для чанков файлов
-const fileChunks = new Map<string, Map<number, Buffer>>();
-
-wss.on('connection', (ws, req) => {
-    const token = req.headers['authorization']?.split(' ')[1];
-
-    if (!token || token == 'None') {
-        ws.close(1008, 'Unauthorized');
-        return;
-    }
-    let decoded: any;
-
+droneServer.on('connection', (ws, req) => {
     try {
-        decoded = jwt.verify(token, process.env.SECRET_KEY);
-        drones.set(decoded.drone_id, ws);
+        const decoded = verifyAuthTokens(req)
 
-        ws.send(JSON.stringify({ type: 'request_schemas' }));
+        eventEmitter.emit(EventTypes.SIGNIN, decoded.drone_id);
+
+        droneClients.set(decoded.drone_id, ws);
 
         ws.on('message', (message: string) => {
             try {
-                const { data: dataBase64, signature } = JSON.parse(message);
-
-                if (!dataBase64 || !signature) {
-                    throw new Error('Invalid message format: data or signature is missing');
-                }
-
-                const expectedSignature = signMessage(process.env.SECRET_KEY, dataBase64);
-                if (signature !== expectedSignature) {
-                    throw new Error('Invalid signature');
-                }
-
-                const decryptedData = decryptData(dataBase64, process.env.SECRET_MESSAGE_KEY!);
-                const data = JSON.parse(decryptedData);
-
-                if (data.type === 'schemas') {
-                    eventEmitter.emit(EventTypes.SCHEMAS_RECEIVED, decoded.drone_id, data.content);
-                    ws.send(JSON.stringify({ type: 'ack' }));
-                }
-
-                if (data.type === 'data') {
-                    eventEmitter.emit(EventTypes.SEND_DATA, decoded.drone_id, JSON.stringify(data.content));
-                    ws.send(JSON.stringify({ type: 'ack' }));
-                }
-
-                if (data.type === 'file_chunk') {
-                    const { filename, chunk_index, chunk_data, droneId } = data.content;
-
-                    // Проверка наличия chunk_data
-                    if (!chunk_data) {
-                        throw new Error('chunk_data is missing in file_chunk message');
-                    }
-
-                    // Инициализация хранилища для файла, если его нет
-                    if (!fileChunks.has(filename)) {
-                        fileChunks.set(filename, new Map<number, Buffer>());
-                    }
-
-                    // Сохраняем чанк
-                    const fileChunkMap = fileChunks.get(filename)!;
-                    fileChunkMap.set(chunk_index, Buffer.from(chunk_data, 'base64'));
-
-                    // Отправляем подтверждение
-                    ws.send(JSON.stringify({ type: 'ack', filename, chunk_index }));
-
-                    // Если это последний чанк, собираем файл
-                    if (data.content.is_last_chunk) {
-                        const chunks = Array.from(fileChunkMap.entries())
-                            .sort((a, b) => a[0] - b[0])
-                            .map(([_, chunk]) => chunk);
-
-                        const fileBuffer = Buffer.concat(chunks);
-                        const filePath = path.join(__dirname, '../temp/ulog', `${droneId}_${filename}`);
-
-                        // Сохраняем файл
-                        fs.writeFileSync(filePath, fileBuffer);
-
-                        // Очищаем хранилище
-                        fileChunks.delete(filename);
-                    }
-                }
+                const decryptedData = decryptData(message);
+                if (decryptedData.type === 'data') eventEmitter.emit(EventTypes.RECEIVED_DATA, decoded.drone_id, decryptedData, ws); 
+                if (decryptedData.type === 'info') eventEmitter.emit(EventTypes.UPDATE_DATA, decoded.drone_id, decryptedData, ws); 
+                ws.send(JSON.stringify({ type: 'ack' }));
             } catch (err) {
                 console.error('Error processing message:', err);
                 ws.send(JSON.stringify({ type: 'error', message: err }));
@@ -179,22 +97,91 @@ wss.on('connection', (ws, req) => {
         });
 
         ws.on('close', () => {
-            drones.delete(decoded.drone_id);
+            droneClients.delete(decoded.drone_id);
             eventEmitter.emit(EventTypes.LOGOUT, decoded.drone_id);
-            console.log(`Drone ${decoded.drone_id} disconnected.`);
         });
-    } catch {
-        console.log('Access token expired. Refreshing...');
+        
+    } catch(error) {
         ws.send(JSON.stringify({ type: 'refresh_token' }));
+        console.error(error);
     }
 });
 
-// Создаем директорию для загрузок, если ее нет
-const uploadDir = path.join(__dirname, '../temp/ulog');
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
+
+// ULog configuration
+const LOG_DIR = path.join(__dirname, '../temp/ulog');
+let currentLogFile: string | null = null;
+let writeStream: fs.WriteStream | null = null;
+
+function initLogging() {
+    if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });
+    if (writeStream) writeStream.close();
+    
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    currentLogFile = path.join(LOG_DIR, `px4_log_${timestamp}.ulg`);
+    writeStream = fs.createWriteStream(currentLogFile);
+    
+    console.log(`New log file created: ${currentLogFile}`);
 }
 
-app.listen(httpPort, () => {
-    console.log(`Server is running on http://localhost:${httpPort}`);
+function processULogData(data: Buffer) {
+    if (data.length >= 16 && data.slice(0, 4).toString() === 'ULog') {
+        console.log('ULog header detected in current stream');
+    }
+}
+
+mavServer.on('connection', (ws) => {
+    console.log('New MAVLink client connected');
+    
+    if (!writeStream || !currentLogFile) initLogging();
+
+    ws.on('message', (encrypted: string) => {
+        try {
+            if (!writeStream) throw new Error('Log file not initialized');
+            
+            const decryptedData = decryptData(encrypted)
+
+            writeStream.write(decryptedData);
+            
+            processULogData(decryptedData)
+
+            ws.send(JSON.stringify({ 
+                status: 'ok',
+                message: 'Data received'
+            }));
+
+        } catch (err) {
+            console.error('Error:', err);
+            ws.send(JSON.stringify({
+                status: 'error',
+                message: 'Failed to process data'
+            }));
+        }
+    });
+
+    ws.on('close', () => {
+        console.log('MAVLink client disconnected');
+    });
+
+    ws.on('error', (err) => {
+        console.error('MAVLink WebSocket error:', err);
+    });
 });
+
+const httpServer = app.listen(httpPort, () => {
+    console.log(`HTTP server running on http://localhost:${httpPort}`);
+    console.log(`MAVLink WebSocket server running on ws://localhost:${mavPort}`);
+    console.log(`Foxglove server running on ws://localhost:${foxglovePort}`);
+    console.log(`React client server running on ws://localhost:${reactPort}`);
+    console.log(`Drone server running on ws://localhost:${dronePort}`);
+});
+
+// Cleanup on server shutdown
+process.on('SIGINT', () => {
+    console.log('Shutting down servers...');
+    eventEmitter.emit(EventTypes.SET_OFFLINE_STATUS);
+    if (writeStream) writeStream.close();
+    httpServer.close();
+    process.exit(0);
+});
+

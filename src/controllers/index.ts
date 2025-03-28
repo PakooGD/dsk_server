@@ -1,5 +1,4 @@
-import { handleTopics,fetchDrones,redirectLogs,loadLogs } from "./droneController";
-import { authorize, refreshToken } from "./authController"
+import { AuthController } from "./AuthController";
+import { DroneController } from "./DroneController";
 
-
-export { authorize, handleTopics, refreshToken,fetchDrones,redirectLogs,loadLogs }
+export {AuthController,DroneController}
