@@ -8,6 +8,7 @@ import { FoxgloveServer } from '@foxglove/ws-protocol';
 import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
+import { formatDate } from './utils/helpers/FormatHelper';
 
 require('dotenv').config();
 
@@ -108,63 +109,37 @@ droneServer.on('connection', (ws, req) => {
 });
 
 
-// ULog configuration
-const LOG_DIR = path.join(__dirname, '../temp/ulog');
-let currentLogFile: string | null = null;
-let writeStream: fs.WriteStream | null = null;
 
-function initLogging() {
-    if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });
-    if (writeStream) writeStream.close();
-    
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    currentLogFile = path.join(LOG_DIR, `px4_log_${timestamp}.ulg`);
-    writeStream = fs.createWriteStream(currentLogFile);
-    
-    console.log(`New log file created: ${currentLogFile}`);
-}
 
-function processULogData(data: Buffer) {
-    if (data.length >= 16 && data.slice(0, 4).toString() === 'ULog') {
-        console.log('ULog header detected in current stream');
-    }
-}
 
 mavServer.on('connection', (ws) => {
-    console.log('New MAVLink client connected');
+    console.log('New client connected');
     
-    if (!writeStream || !currentLogFile) initLogging();
+    const LOG_DIR = path.join(__dirname, '../temp/ulog');
+    const filename = path.join(LOG_DIR, `${formatDate(Date.now(), "DD_MM_YYYY-HH_mm")}.ulg`);
+    
+    const fileStream = fs.createWriteStream(filename);
+    
+    console.log(`Creating log file: ${filename}`);
 
-    ws.on('message', (encrypted: string) => {
+    ws.binaryType = 'arraybuffer';
+    ws.on('message', (message: any) => {
         try {
-            if (!writeStream) throw new Error('Log file not initialized');
-            
-            const decryptedData = decryptData(encrypted)
-
-            writeStream.write(decryptedData);
-            
-            processULogData(decryptedData)
-
-            ws.send(JSON.stringify({ 
-                status: 'ok',
-                message: 'Data received'
-            }));
-
+            const buffer = Buffer.from(message);
+            fileStream.write(buffer);
         } catch (err) {
-            console.error('Error:', err);
-            ws.send(JSON.stringify({
-                status: 'error',
-                message: 'Failed to process data'
-            }));
+            console.error('Error processing message:', err);
         }
     });
-
+    
     ws.on('close', () => {
-        console.log('MAVLink client disconnected');
+        console.log(`Client disconnected, closing file: ${filename}`);
+        fileStream.end();
     });
-
+    
     ws.on('error', (err) => {
-        console.error('MAVLink WebSocket error:', err);
+        console.error('WebSocket error:', err);
+        fileStream.end();
     });
 });
 
@@ -180,7 +155,6 @@ const httpServer = app.listen(httpPort, () => {
 process.on('SIGINT', () => {
     console.log('Shutting down servers...');
     eventEmitter.emit(EventTypes.SET_OFFLINE_STATUS);
-    if (writeStream) writeStream.close();
     httpServer.close();
     process.exit(0);
 });

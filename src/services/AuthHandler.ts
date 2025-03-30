@@ -9,7 +9,7 @@ export class AuthHandler {
     public static Auth(drone_id: string, topics: any, ip_address: string): any {
         try {
             const accessToken = jwt.sign({ drone_id }, process.env.SECRET_KEY, { expiresIn: '15m' });
-            const refreshToken = jwt.sign({ drone_id }, process.env.REFRESH_SECRET_KEY, { expiresIn: '10d' });
+            const refreshToken = jwt.sign({ drone_id }, process.env.REFRESH_SECRET_KEY, { expiresIn: '2d' });
 
             const decoded = jwt.decode(refreshToken);
             const expiresAt = new Date(decoded.exp * 1000);

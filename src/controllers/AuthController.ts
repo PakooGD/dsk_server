@@ -25,8 +25,7 @@ export class AuthController {
     public static RefreshToken(req: any, res: any, next: NextFunction) {
         const { encrypted_data } = req.body
         const decryptedData = decryptData(encrypted_data);
-        const { refreshToken } = JSON.parse(decryptedData);
-
+        const { refreshToken } = decryptedData;
         if (!refreshToken) {
             res.status(401)
             throw new BadRequest('Refresh token is required');  
