@@ -4,7 +4,14 @@ export enum EventTypes {
     LOGOUT = 'LOGOUT',
     SIGNIN = 'SIGNIN',
     SET_OFFLINE_STATUS = 'SET_OFFLINE_STATUS',
-    UPDATE_DATA = 'UPDATE_DATA'
+    UPDATE_DATA = 'UPDATE_DATA',
+    KEY_EXCHANGE = 'KEY_EXCHANGE'
+}
+
+export interface DroneSession {
+    key: Buffer;
+    iv: Buffer;
+    lastActivity: number;
 }
 
 export interface DataVisualizer {

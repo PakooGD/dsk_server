@@ -1,5 +1,5 @@
 import { NextFunction } from 'express';
-import { DroneHandler } from '../services/DroneHandler';
+import { DroneHandler } from '../services/drone.service';
 import { BadRequest } from '../utils/errors/errors';
 
 

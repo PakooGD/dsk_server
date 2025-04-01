@@ -1,9 +1,9 @@
 import { TopicStatus, DataVisualizer } from '../types/ITypes';
-import { FoxgloveVisualizer, ReactVisualizer } from './LogVisualizers';
+import { FoxgloveVisualizer, ReactVisualizer } from '../utils/LogVisualizers';
 import { OperationFailed } from '../utils/errors/errors';
 import { droneClients,server } from '../app';
-import { Channels, Subscriptions } from './LogVisualizers/FoxgloveVisualizer';
-import { AuthHandler } from './AuthHandler';
+import { Channels, Subscriptions } from '../utils/LogVisualizers/FoxgloveVisualizer';
+import { AuthService } from './auth.service';
 
 const visualizers = new Map<string, DataVisualizer>();
 
@@ -56,7 +56,7 @@ export class DroneHandler {
                         Channels.delete(keyName)
                     }
                 }
-                AuthHandler.UpdateData(data.drone_id, data)
+                AuthService.UpdateData(data.drone_id, data)
                 Subscriptions.set(keyName, item.status)
             });
         } catch (err) {

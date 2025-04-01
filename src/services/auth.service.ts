@@ -5,12 +5,12 @@ require('dotenv').config();
 
 const jwt = require('jsonwebtoken');
 
-export class AuthHandler {
-    public static Auth(drone_id: string, topics: any, ip_address: string): any {
+export class AuthService {
+    public static Auth(drone_id: string, ip_address: string): any {
         try {
             const accessToken = jwt.sign({ drone_id }, process.env.SECRET_KEY, { expiresIn: '15m' });
             const refreshToken = jwt.sign({ drone_id }, process.env.REFRESH_SECRET_KEY, { expiresIn: '2d' });
-
+            
             const decoded = jwt.decode(refreshToken);
             const expiresAt = new Date(decoded.exp * 1000);
     
@@ -22,12 +22,11 @@ export class AuthHandler {
                 drones[existingIndex].expiresAt = expiresAt;
                 drones[existingIndex].ip_address = ip_address;
                 drones[existingIndex].status = 'online';
-                drones[existingIndex].topics = topics; 
             } else {
                 drones.push({
                     drone_id,
                     ip_address,
-                    topics,
+                    topics:[],
                     refreshToken,
                     expiresAt,
                     status: 'online',
@@ -41,27 +40,49 @@ export class AuthHandler {
             throw new OperationFailed('Failed to save file');  
         }
     };
+
+    public static verifyAuthTokens(req:any) {
+        try {
+            const token = req.headers['authorization']?.split(' ')[1];
+            if (!token || token == 'None') {
+                throw new Error('Auth tokens missing');
+            }
+            return jwt.verify(token, process.env.SECRET_KEY);
+        } catch (error) {
+            throw new Error('Access token expired. Refreshing...');
+        }
+    }
     
     public static Refresh(refreshToken: any): any {
         try {
             const decoded = jwt.verify(refreshToken, process.env.REFRESH_SECRET_KEY);
             const drone_id = decoded.drone_id;
-    
+
+            const newAccessToken = jwt.sign({ drone_id }, process.env.SECRET_KEY, { expiresIn: '15m' });
+            const newRefreshToken = jwt.sign({ drone_id }, process.env.REFRESH_SECRET_KEY, { expiresIn: '2d' });
+
             const drones = readDronesFile();
-            const tokenRecord = drones.find((token:any) => token.drone_id === drone_id);
-    
-            if (!tokenRecord || tokenRecord.refreshToken !== refreshToken) {
-                throw new OperationFailed('Invalid refresh token');
+
+            const existingIndex = drones.findIndex((drone:any) => drone.drone_id === drone_id);
+
+            if (existingIndex !== -1) {
+                if(drones[existingIndex].refreshToken !== refreshToken) {
+                    throw new OperationFailed('Invalid refresh token');
+                }
+                if(new Date(drones[existingIndex].expiresAt) < new Date()) {
+                    throw new OperationFailed('Refresh token expired');
+                }
+                const decoded = jwt.decode(newRefreshToken);
+                const expiresAt = new Date(decoded.exp * 1000);
+
+                drones[existingIndex].refreshToken = newRefreshToken;
+                drones[existingIndex].expiresAt = expiresAt;
+                drones[existingIndex].status = 'online';
             }
 
-            if (new Date(tokenRecord.expiresAt) < new Date()) {
-                throw new OperationFailed('Refresh token expired');
-            }
-
-            tokenRecord.status = 'online';
             writeDronesFile(drones);
 
-            return jwt.sign({ drone_id }, process.env.SECRET_KEY, { expiresIn: '15m' });
+            return { newAccessToken, newRefreshToken };
         } catch (err) {
             throw new OperationFailed('Failed to save file');  
         }
@@ -141,7 +162,7 @@ export class AuthHandler {
             const existingIndex = drones.findIndex((drone:any) => drone.drone_id === drone_id);
             if (existingIndex !== -1) {
                 drones[existingIndex].topics = data.topics;
-                drones[existingIndex].ip_address = data.ip_address || drones[existingIndex].ip_address;
+                drones[existingIndex].ip_address = data.ip;
                 writeDronesFile(drones);
             }
         } catch (err) {

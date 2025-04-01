@@ -1,21 +1,16 @@
 import { NextFunction } from 'express';
 import { BadRequest } from '../utils/errors/errors';
-import { AuthHandler } from '../services/AuthHandler'
-import { signMessage, decryptData } from '../utils/helpers/CryptoHelper';
+import { AuthService } from '../services/auth.service'
 
 export class AuthController {
     public static AuthDrone(req: any, res: any, next: NextFunction) {
-        const { encrypted_data } = req.body
-        const decryptedData = decryptData(encrypted_data);
-        
-        const { drone_id, topics, ip_address } = decryptedData;
-        
-        if (!drone_id || !topics || !ip_address) {
+        const { drone_id, ip_address } = req.body;
+        if (!drone_id || !ip_address) {
             res.status(401)
             throw new BadRequest('Missing field');  
         }
         try {  
-            const { accessToken, refreshToken } = AuthHandler.Auth(drone_id, topics, ip_address);
+            const { accessToken, refreshToken } = AuthService.Auth(drone_id, ip_address);
             res.status(200).json({ accessToken, refreshToken });
         } catch (err) {
             next(err)
@@ -23,16 +18,14 @@ export class AuthController {
     };
 
     public static RefreshToken(req: any, res: any, next: NextFunction) {
-        const { encrypted_data } = req.body
-        const decryptedData = decryptData(encrypted_data);
-        const { refreshToken } = decryptedData;
-        if (!refreshToken) {
+        const { refresh_token } = req.body;
+        if (!refresh_token) {
             res.status(401)
             throw new BadRequest('Refresh token is required');  
         }
         try {     
-            const accessToken = AuthHandler.Refresh(refreshToken);
-            res.status(200).json({accessToken});
+            const { newAccessToken, newRefreshToken } = AuthService.Refresh(refresh_token);
+            res.status(200).json({accessToken: newAccessToken, refreshToken: newRefreshToken});
         } catch (err) {
             next(err)
         }
@@ -43,7 +36,7 @@ export class AuthController {
             throw new BadRequest('Missing data');  
         }
         try {  
-            const drones = AuthHandler.FetchDrones()   
+            const drones = AuthService.FetchDrones()   
             res.status(200).json(drones);
         } catch (err) {
             next(err)

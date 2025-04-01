@@ -1,17 +1,17 @@
 import express from 'express';
 import { EventEmitter } from 'events';
 import { EventTypes } from '../types/ITypes' 
-import { DroneHandler } from '../services/DroneHandler';
-import { AuthHandler } from '../services/AuthHandler';
+import { DroneHandler } from '../services/drone.service';
+import { AuthService } from '../services/auth.service';
 import { AuthController, DroneController } from '../controllers';
 
 export const eventEmitter = new EventEmitter();
 
 eventEmitter.on(EventTypes.RECEIVED_DATA, DroneHandler.HandleData);
-eventEmitter.on(EventTypes.LOGOUT, AuthHandler.HandleLogout);
-eventEmitter.on(EventTypes.SET_OFFLINE_STATUS, AuthHandler.SetAllDronesOffline);
-eventEmitter.on(EventTypes.SIGNIN, AuthHandler.SetOnlineStatus);
-eventEmitter.on(EventTypes.UPDATE_DATA, AuthHandler.UpdateData);
+eventEmitter.on(EventTypes.LOGOUT, AuthService.HandleLogout);
+eventEmitter.on(EventTypes.SET_OFFLINE_STATUS, AuthService.SetAllDronesOffline);
+eventEmitter.on(EventTypes.SIGNIN, AuthService.SetOnlineStatus);
+eventEmitter.on(EventTypes.UPDATE_DATA, AuthService.UpdateData);
 
 const router = express.Router();
 

@@ -1,16 +1,19 @@
 import express from 'express';
-import droneRoutes, {eventEmitter} from './routes/DroneRoutes';
-import { verifyAuthTokens, decryptData } from './utils/helpers/CryptoHelper';
+import droneRoutes, {eventEmitter} from './routes/drone.routes';
 import { EventTypes } from './types/ITypes';
-import { handleErrors } from './middleware/handleErrors';
+import { handleErrors } from './middleware/error.middleware';
 import WebSocket, { WebSocketServer } from 'ws';
 import { FoxgloveServer } from '@foxglove/ws-protocol';
 import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 import { formatDate } from './utils/helpers/FormatHelper';
+import { CryptoService } from './services/encryption.service';
+import { AuthService } from './services/auth.service';
 
 require('dotenv').config();
+
+const cryptoService = CryptoService.getInstance();
 
 const dronePort: any = process.env.DRONE || 8082;
 const foxglovePort: any = process.env.FOXGLOVE_PORT || 8081;
@@ -79,18 +82,35 @@ foxgloveServer.on("connection", (conn: any, req: any) => {
 
 droneServer.on('connection', (ws, req) => {
     try {
-        const decoded = verifyAuthTokens(req)
+        const decoded = AuthService.verifyAuthTokens(req)
+        const droneId = decoded.drone_id
 
-        eventEmitter.emit(EventTypes.SIGNIN, decoded.drone_id);
+        ws.send(JSON.stringify({
+            type: 'keyExchange',
+            publicKey: cryptoService.getPublicKey()
+        }));
 
-        droneClients.set(decoded.drone_id, ws);
+        eventEmitter.emit(EventTypes.SIGNIN, droneId);
+        droneClients.set(droneId, ws);
 
         ws.on('message', (message: string) => {
             try {
-                const decryptedData = decryptData(message);
-                if (decryptedData.type === 'data') eventEmitter.emit(EventTypes.RECEIVED_DATA, decoded.drone_id, decryptedData, ws); 
-                if (decryptedData.type === 'info') eventEmitter.emit(EventTypes.UPDATE_DATA, decoded.drone_id, decryptedData, ws); 
-                ws.send(JSON.stringify({ type: 'ack' }));
+                const data = JSON.parse(message);
+                if (data.type === 'session_init') {
+                    if (cryptoService.initDroneSession(
+                        droneId, 
+                        data.key, 
+                        data.iv
+                    )) {
+                        ws.send(JSON.stringify({ type: 'fetchInfo' }));
+                    }
+                } else {
+                    const decryptedData = cryptoService.decryptDroneMessage(droneId, data);
+                    if (decryptedData.type === 'data') eventEmitter.emit(EventTypes.RECEIVED_DATA, droneId, decryptedData, ws); 
+                    if (decryptedData.type === 'info') eventEmitter.emit(EventTypes.UPDATE_DATA, droneId, decryptedData, ws); 
+                    ws.send(JSON.stringify({ type: 'ack' }));
+                }
+
             } catch (err) {
                 console.error('Error processing message:', err);
                 ws.send(JSON.stringify({ type: 'error', message: err }));
@@ -98,50 +118,54 @@ droneServer.on('connection', (ws, req) => {
         });
 
         ws.on('close', () => {
-            droneClients.delete(decoded.drone_id);
-            eventEmitter.emit(EventTypes.LOGOUT, decoded.drone_id);
+            droneClients.delete(droneId);
+            eventEmitter.emit(EventTypes.LOGOUT, droneId);
         });
         
     } catch(error) {
-        ws.send(JSON.stringify({ type: 'refresh_token' }));
         console.error(error);
     }
 });
 
 
+// mavServer.on('connection', (ws) => {
+//     console.log('New client connected');
 
+//     const LOG_DIR = path.join(__dirname, '../temp/ulog');
+//     if (!fs.existsSync(LOG_DIR)) {
+//         fs.mkdirSync(LOG_DIR, { recursive: true });
+//     }
 
+//     const file = `${formatDate(Date.now(), "DD_MM_YYYY-HH_mm")}.ulg`
+//     const filename = path.join(LOG_DIR, file);
+    
+//     const fileStream = fs.createWriteStream(filename);
+    
+//     console.log(`Creating log file: ${filename}`);
 
-mavServer.on('connection', (ws) => {
-    console.log('New client connected');
+//     ws.binaryType = 'arraybuffer';
+//     ws.on('message', (message: any) => {
+//         try {
+//             const decrypted = decryptData(message);
+//             if (decrypted.type === 'ulog') {
+//                 const data = Buffer.from(decrypted.data, 'hex');
+//                 fileStream.write(data);
+//             }
+//         } catch (err) {
+//             console.error('Error processing message:', err);
+//         }
+//     });
     
-    const LOG_DIR = path.join(__dirname, '../temp/ulog');
-    const filename = path.join(LOG_DIR, `${formatDate(Date.now(), "DD_MM_YYYY-HH_mm")}.ulg`);
+//     ws.on('close', () => {
+//         console.log(`Client disconnected, closing file: ${filename}`);
+//         fileStream.end();
+//     });
     
-    const fileStream = fs.createWriteStream(filename);
-    
-    console.log(`Creating log file: ${filename}`);
-
-    ws.binaryType = 'arraybuffer';
-    ws.on('message', (message: any) => {
-        try {
-            const buffer = Buffer.from(message);
-            fileStream.write(buffer);
-        } catch (err) {
-            console.error('Error processing message:', err);
-        }
-    });
-    
-    ws.on('close', () => {
-        console.log(`Client disconnected, closing file: ${filename}`);
-        fileStream.end();
-    });
-    
-    ws.on('error', (err) => {
-        console.error('WebSocket error:', err);
-        fileStream.end();
-    });
-});
+//     ws.on('error', (err) => {
+//         console.error('WebSocket error:', err);
+//         fileStream.end();
+//     });
+// });
 
 const httpServer = app.listen(httpPort, () => {
     console.log(`HTTP server running on http://localhost:${httpPort}`);
